@@ -1,831 +1,360 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.animation import FuncAnimation
-import numpy as np
 import random
-import threading
-import time
-from collections import deque
-import statistics
 
 class Process:
-    """Process Control Block (PCB) - represents a process in the system"""
-    def __init__(self, arrival_time, process_id):
-        self.process_id = process_id
+    """Process Control Block (PCB)"""
+    def __init__(self, pid, arrival_time, burst_time, priority=0):
+        self.pid = pid
         self.arrival_time = arrival_time
-        self.burst_time = None  # Total CPU time needed
-        self.remaining_time = None  # For preemptive algorithms
-        self.priority = None  # For priority scheduling
-        self.start_time = None  # When process first gets CPU
-        self.completion_time = None  # When process finishes
-        self.waiting_time = 0  # Time spent in ready queue
-        self.turnaround_time = 0  # Total time from arrival to completion
-        self.response_time = None  # Time from arrival to first execution
-        self.state = "NEW"  # NEW, READY, RUNNING, TERMINATED
+        self.burst_time = burst_time
+        self.priority = priority
+        self.completion_time = 0
+        self.turnaround_time = 0
+        self.waiting_time = 0
+        self.remaining_time = burst_time
 
-class ProcessSchedulerGUI:
+class CPUScheduler:
     def __init__(self, root):
         self.root = root
-        self.root.title("⚙️ Process Scheduling Simulator")
-        self.root.geometry("1200x900")
+        self.root.title("⚙️ CPU Scheduling Simulator - MAPUA UNIVERSITY")
+        self.root.geometry("900x700")
         self.root.configure(bg='#f0f0f0')
         
-        # Simulation parameters
-        self.simulation_running = False
-        self.simulation_thread = None
-        self.current_time = 0
         self.processes = []
-        self.completed_processes = []
-        
-        # Animation data
-        self.time_points = []
-        self.ready_queue_data = []
-        self.gantt_data = []  # For Gantt chart: [(start_time, process_id, duration)]
-        
         self.setup_gui()
         
     def setup_gui(self):
-        # Create main frames
-        control_frame = ttk.Frame(self.root)
-        control_frame.pack(fill='x', padx=10, pady=5)
+        # Header
+        header_frame = tk.Frame(self.root, bg='#2c3e50', height=60)
+        header_frame.pack(fill='x')
+        header_frame.pack_propagate(False)
         
-        viz_frame = ttk.Frame(self.root)
-        viz_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        tk.Label(header_frame, text="⚙️ CPU SCHEDULING SIMULATOR", 
+                font=('Arial', 18, 'bold'), bg='#2c3e50', fg='white').pack(pady=15)
         
-        # Control Panel
-        ttk.Label(control_frame, text="⚙️ Process Scheduling Simulator", 
-                 font=('Arial', 16, 'bold')).grid(row=0, column=0, columnspan=4, pady=10)
+        # Main container
+        main_frame = tk.Frame(self.root, bg='#f0f0f0')
+        main_frame.pack(fill='both', expand=True, padx=20, pady=20)
         
-        # Input parameters
-        params_frame = ttk.LabelFrame(control_frame, text="Simulation Parameters", padding=10)
-        params_frame.grid(row=1, column=0, columnspan=4, sticky='ew', pady=5)
+        # Left Panel - Input
+        left_frame = ttk.LabelFrame(main_frame, text="📋 Process Input", padding=15)
+        left_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 10))
         
         # Number of processes
-        ttk.Label(params_frame, text="Number of Processes:").grid(row=0, column=0, sticky='w')
-        self.num_processes_var = tk.StringVar(value="10")
-        ttk.Entry(params_frame, textvariable=self.num_processes_var, width=10).grid(row=0, column=1, padx=5)
+        tk.Label(left_frame, text="Number of Processes (1-10):", font=('Arial', 10)).grid(row=0, column=0, sticky='w', pady=5)
+        self.num_processes = tk.StringVar(value="5")
+        tk.Entry(left_frame, textvariable=self.num_processes, width=10, font=('Arial', 10)).grid(row=0, column=1, pady=5)
         
-        # Arrival time range
-        ttk.Label(params_frame, text="Arrival Time (ms):").grid(row=0, column=2, sticky='w', padx=(20,0))
-        self.arrival_min_var = tk.StringVar(value="0")
-        self.arrival_max_var = tk.StringVar(value="50")
-        ttk.Entry(params_frame, textvariable=self.arrival_min_var, width=5).grid(row=0, column=3, padx=2)
-        ttk.Label(params_frame, text="to").grid(row=0, column=4)
-        ttk.Entry(params_frame, textvariable=self.arrival_max_var, width=5).grid(row=0, column=5, padx=2)
+        tk.Button(left_frame, text="Generate Random Processes", command=self.generate_random, 
+                 bg='#3498db', fg='white', font=('Arial', 10, 'bold'), cursor='hand2').grid(row=1, column=0, columnspan=2, pady=10, sticky='ew')
         
-        # Burst time range
-        ttk.Label(params_frame, text="Burst Time (ms):").grid(row=1, column=0, sticky='w')
-        self.burst_min_var = tk.StringVar(value="5")
-        self.burst_max_var = tk.StringVar(value="25")
-        ttk.Entry(params_frame, textvariable=self.burst_min_var, width=5).grid(row=1, column=1, padx=2)
-        ttk.Label(params_frame, text="to").grid(row=1, column=2)
-        ttk.Entry(params_frame, textvariable=self.burst_max_var, width=5).grid(row=1, column=3, padx=2)
+        # Process entry table
+        tk.Label(left_frame, text="Or Enter Manually:", font=('Arial', 10, 'bold')).grid(row=2, column=0, columnspan=2, pady=(10,5), sticky='w')
         
-        # Priority range (for priority scheduling)
-        ttk.Label(params_frame, text="Priority Range:").grid(row=1, column=4, sticky='w', padx=(20,0))
-        self.priority_min_var = tk.StringVar(value="1")
-        self.priority_max_var = tk.StringVar(value="5")
-        ttk.Entry(params_frame, textvariable=self.priority_min_var, width=5).grid(row=1, column=5, padx=2)
-        ttk.Label(params_frame, text="to").grid(row=1, column=6)
-        ttk.Entry(params_frame, textvariable=self.priority_max_var, width=5).grid(row=1, column=7, padx=2)
+        table_frame = tk.Frame(left_frame)
+        table_frame.grid(row=3, column=0, columnspan=2, pady=5)
         
-        # Time Quantum (for Round Robin)
-        ttk.Label(params_frame, text="Time Quantum (RR):").grid(row=2, column=0, sticky='w')
-        self.quantum_var = tk.StringVar(value="5")
-        ttk.Entry(params_frame, textvariable=self.quantum_var, width=10).grid(row=2, column=1, padx=5)
-        ttk.Label(params_frame, text="ms").grid(row=2, column=2, sticky='w')
+        headers = ["P#", "Arrival", "Burst", "Priority"]
+        for col, header in enumerate(headers):
+            tk.Label(table_frame, text=header, font=('Arial', 9, 'bold'), width=8).grid(row=0, column=col, padx=2)
         
-        # Algorithm selection
-        algo_frame = ttk.LabelFrame(control_frame, text="Scheduling Algorithm", padding=10)
-        algo_frame.grid(row=2, column=0, columnspan=4, sticky='ew', pady=5)
+        self.entry_widgets = []
+        for i in range(10):
+            row_entries = []
+            tk.Label(table_frame, text=f"P{i+1}", font=('Arial', 9), width=8).grid(row=i+1, column=0, padx=2, pady=2)
+            for col in range(1, 4):
+                entry = tk.Entry(table_frame, width=8, font=('Arial', 9))
+                entry.grid(row=i+1, column=col, padx=2, pady=2)
+                row_entries.append(entry)
+            self.entry_widgets.append(row_entries)
         
-        self.algorithm_var = tk.StringVar(value="fcfs")
+        tk.Button(left_frame, text="Use Manual Input", command=self.use_manual_input,
+                 bg='#2ecc71', fg='white', font=('Arial', 10, 'bold'), cursor='hand2').grid(row=4, column=0, columnspan=2, pady=10, sticky='ew')
+        
+        # Right Panel - Algorithm Selection
+        right_frame = ttk.LabelFrame(main_frame, text="🔧 Algorithm Selection", padding=15)
+        right_frame.grid(row=0, column=1, sticky='nsew')
+        
+        self.algorithm = tk.StringVar(value="fcfs")
+        
         algorithms = [
-            ("FCFS (First Come First Serve)", "fcfs"),
-            ("SJF (Shortest Job First)", "sjf"),
-            ("SRTF (Shortest Remaining Time First)", "srtf"),
-            ("Round Robin", "rr"),
-            ("Priority Scheduling (Non-Preemptive)", "priority"),
-            ("Priority Scheduling (Preemptive)", "priority_preemptive")
+            ("First Come First Serve (FCFS)", "fcfs"),
+            ("Shortest Job First (SJF)", "sjf"),
+            ("Round Robin (RR)", "rr"),
+            ("Priority Scheduling", "priority")
         ]
         
         for i, (text, value) in enumerate(algorithms):
-            row = i // 3
-            col = i % 3
-            ttk.Radiobutton(algo_frame, text=text, variable=self.algorithm_var, 
-                          value=value).grid(row=row, column=col, padx=10, pady=2, sticky='w')
+            tk.Radiobutton(right_frame, text=text, variable=self.algorithm, value=value,
+                          font=('Arial', 11), bg='white', cursor='hand2').grid(row=i, column=0, sticky='w', pady=5, padx=5)
         
-        # Control buttons
-        button_frame = ttk.Frame(control_frame)
-        button_frame.grid(row=3, column=0, columnspan=4, pady=10)
+        # Time Quantum for RR
+        tk.Label(right_frame, text="Time Quantum (for RR):", font=('Arial', 10)).grid(row=4, column=0, sticky='w', pady=(15,5))
+        self.quantum = tk.StringVar(value="3")
+        tk.Entry(right_frame, textvariable=self.quantum, width=10, font=('Arial', 10)).grid(row=5, column=0, sticky='w', pady=5)
         
-        self.start_btn = ttk.Button(button_frame, text="▶️ Start Simulation", 
-                                    command=self.start_simulation)
-        self.start_btn.grid(row=0, column=0, padx=5)
+        # Run Button
+        tk.Button(right_frame, text="▶ RUN SIMULATION", command=self.run_simulation,
+                 bg='#e74c3c', fg='white', font=('Arial', 12, 'bold'), cursor='hand2', height=2).grid(row=6, column=0, pady=20, sticky='ew')
         
-        self.stop_btn = ttk.Button(button_frame, text="⏹️ Stop", 
-                                   command=self.stop_simulation, state='disabled')
-        self.stop_btn.grid(row=0, column=1, padx=5)
+        # Results area
+        results_frame = ttk.LabelFrame(main_frame, text="📊 Simulation Results", padding=15)
+        results_frame.grid(row=1, column=0, columnspan=2, sticky='nsew', pady=(20, 0))
         
-        self.reset_btn = ttk.Button(button_frame, text="🔄 Reset", 
-                                    command=self.reset_simulation)
-        self.reset_btn.grid(row=0, column=2, padx=5)
+        # Results text with scrollbar
+        text_frame = tk.Frame(results_frame)
+        text_frame.pack(fill='both', expand=True)
         
-        # Status
-        self.status_var = tk.StringVar(value="Ready to simulate")
-        ttk.Label(control_frame, textvariable=self.status_var, 
-                 font=('Arial', 10)).grid(row=4, column=0, columnspan=4, pady=5)
+        scrollbar = tk.Scrollbar(text_frame)
+        scrollbar.pack(side='right', fill='y')
         
-        # Create visualization area
-        self.setup_visualizations(viz_frame)
+        self.results_text = tk.Text(text_frame, height=15, font=('Courier', 9), 
+                                    yscrollcommand=scrollbar.set, bg='#ecf0f1')
+        self.results_text.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=self.results_text.yview)
         
-    def setup_visualizations(self, parent):
-        # Create notebook for different views
-        notebook = ttk.Notebook(parent)
-        notebook.pack(fill='both', expand=True)
+        # Configure grid weights
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_rowconfigure(1, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(1, weight=1)
         
-        # Real-time simulation tab
-        sim_frame = ttk.Frame(notebook)
-        notebook.add(sim_frame, text="🎬 Live Simulation")
-        
-        # Gantt chart tab
-        gantt_frame = ttk.Frame(notebook)
-        notebook.add(gantt_frame, text="📊 Gantt Chart")
-        
-        # Results tab
-        results_frame = ttk.Frame(notebook)
-        notebook.add(results_frame, text="📈 Results")
-        
-        # Setup live simulation visualization
-        self.fig_live, (self.ax_ready_queue, self.ax_timeline) = plt.subplots(2, 1, figsize=(10, 6))
-        self.fig_live.suptitle('Live Process Scheduling Simulation', fontsize=14, fontweight='bold')
-        plt.subplots_adjust(hspace=0.4)
-        
-        self.canvas_live = FigureCanvasTkAgg(self.fig_live, sim_frame)
-        self.canvas_live.get_tk_widget().pack(fill='both', expand=True)
-        
-        # Setup ready queue plot
-        self.ax_ready_queue.set_title('Ready Queue Length Over Time')
-        self.ax_ready_queue.set_xlabel('Time (ms)')
-        self.ax_ready_queue.set_ylabel('Processes in Ready Queue')
-        self.ax_ready_queue.grid(True, alpha=0.3)
-        
-        # Setup timeline plot
-        self.ax_timeline.set_title('Process Execution Timeline')
-        self.ax_timeline.set_xlabel('Time (ms)')
-        self.ax_timeline.set_ylabel('Cumulative Processes Completed')
-        self.ax_timeline.grid(True, alpha=0.3)
-        
-        # Setup Gantt chart
-        self.fig_gantt, self.ax_gantt = plt.subplots(figsize=(10, 6))
-        self.fig_gantt.suptitle('Process Execution Gantt Chart', fontsize=14, fontweight='bold')
-        
-        self.canvas_gantt = FigureCanvasTkAgg(self.fig_gantt, gantt_frame)
-        self.canvas_gantt.get_tk_widget().pack(fill='both', expand=True)
-        
-        # Setup results visualization
-        self.fig_results, ((self.ax_throughput, self.ax_waiting), 
-                          (self.ax_turnaround, self.ax_response)) = plt.subplots(2, 2, figsize=(10, 6))
-        self.fig_results.suptitle('Scheduling Performance Analysis', fontsize=14, fontweight='bold')
-        plt.subplots_adjust(hspace=0.4, wspace=0.3)
-        
-        self.canvas_results = FigureCanvasTkAgg(self.fig_results, results_frame)
-        self.canvas_results.get_tk_widget().pack(fill='both', expand=True)
-        
-        # Results text area
-        self.results_text = tk.Text(results_frame, height=10, font=('Courier', 9))
-        self.results_text.pack(fill='x', padx=10, pady=5)
-        
-    def start_simulation(self):
+    def generate_random(self):
         try:
-            # Validate inputs
-            num_processes = int(self.num_processes_var.get())
-            arrival_min = int(self.arrival_min_var.get())
-            arrival_max = int(self.arrival_max_var.get())
-            burst_min = int(self.burst_min_var.get())
-            burst_max = int(self.burst_max_var.get())
-            priority_min = int(self.priority_min_var.get())
-            priority_max = int(self.priority_max_var.get())
-            quantum = int(self.quantum_var.get())
+            n = int(self.num_processes.get())
+            if n < 1 or n > 10:
+                messagebox.showerror("Error", "Number of processes must be between 1 and 10")
+                return
+                
+            # Clear previous entries
+            for row in self.entry_widgets:
+                for entry in row:
+                    entry.delete(0, tk.END)
             
-            if arrival_min > arrival_max or burst_min > burst_max or priority_min > priority_max:
-                messagebox.showerror("Error", "Min values must be ≤ max values")
-                return
+            # Generate random values
+            for i in range(n):
+                arrival = random.randint(0, 10)
+                burst = random.randint(1, 10)
+                priority = random.randint(1, 5)
                 
-            if num_processes < 1 or num_processes > 100:
-                messagebox.showerror("Error", "Number of processes must be between 1 and 100")
-                return
+                self.entry_widgets[i][0].insert(0, str(arrival))
+                self.entry_widgets[i][1].insert(0, str(burst))
+                self.entry_widgets[i][2].insert(0, str(priority))
                 
+            messagebox.showinfo("Success", f"Generated {n} random processes!")
+            
         except ValueError:
-            messagebox.showerror("Error", "Please enter valid numbers")
+            messagebox.showerror("Error", "Invalid number of processes")
+    
+    def use_manual_input(self):
+        messagebox.showinfo("Manual Input", "Fill in the table above and click RUN SIMULATION")
+    
+    def read_processes(self):
+        self.processes = []
+        try:
+            n = int(self.num_processes.get())
+            if n < 1 or n > 10:
+                messagebox.showerror("Error", "Number of processes must be between 1 and 10")
+                return False
+            
+            for i in range(n):
+                arrival = self.entry_widgets[i][0].get()
+                burst = self.entry_widgets[i][1].get()
+                priority = self.entry_widgets[i][2].get()
+                
+                if not arrival or not burst:
+                    messagebox.showerror("Error", f"Please fill Arrival and Burst time for P{i+1}")
+                    return False
+                
+                arrival = int(arrival)
+                burst = int(burst)
+                priority = int(priority) if priority else 0
+                
+                if burst <= 0:
+                    messagebox.showerror("Error", f"Burst time for P{i+1} must be positive")
+                    return False
+                
+                self.processes.append(Process(i+1, arrival, burst, priority))
+            
+            return True
+            
+        except ValueError:
+            messagebox.showerror("Error", "Invalid input. Please enter valid numbers.")
+            return False
+    
+    def run_simulation(self):
+        if not self.read_processes():
             return
         
-        # Reset data
-        self.reset_data()
+        algo = self.algorithm.get()
         
-        # Update UI
-        self.start_btn.config(state='disabled')
-        self.stop_btn.config(state='normal')
-        self.simulation_running = True
+        if algo == "fcfs":
+            self.fcfs()
+        elif algo == "sjf":
+            self.sjf()
+        elif algo == "rr":
+            try:
+                quantum = int(self.quantum.get())
+                if quantum <= 0:
+                    messagebox.showerror("Error", "Time quantum must be positive")
+                    return
+                self.round_robin(quantum)
+            except ValueError:
+                messagebox.showerror("Error", "Invalid time quantum")
+        elif algo == "priority":
+            self.priority_scheduling()
+    
+    def fcfs(self):
+        """First Come First Serve"""
+        processes = sorted(self.processes, key=lambda p: p.arrival_time)
+        current_time = 0
+        gantt = []
         
-        # Start simulation in separate thread
-        self.simulation_thread = threading.Thread(
-            target=self.run_simulation,
-            args=(num_processes, arrival_min, arrival_max, burst_min, burst_max, 
-                  priority_min, priority_max, quantum)
-        )
-        self.simulation_thread.daemon = True
-        self.simulation_thread.start()
-        
-        # Start animation
-        self.animation = FuncAnimation(self.fig_live, self.update_plots, interval=100, blit=False)
-        
-    def stop_simulation(self):
-        self.simulation_running = False
-        self.start_btn.config(state='normal')
-        self.stop_btn.config(state='disabled')
-        self.status_var.set("Simulation stopped")
-        
-        if hasattr(self, 'animation'):
-            self.animation.event_source.stop()
+        for p in processes:
+            if current_time < p.arrival_time:
+                current_time = p.arrival_time
             
-    def reset_simulation(self):
-        self.stop_simulation()
-        self.reset_data()
-        self.clear_plots()
-        self.status_var.set("Ready to simulate")
+            gantt.append(f"P{p.pid}")
+            current_time += p.burst_time
+            p.completion_time = current_time
+            p.turnaround_time = p.completion_time - p.arrival_time
+            p.waiting_time = p.turnaround_time - p.burst_time
         
-    def reset_data(self):
-        self.current_time = 0
-        self.processes = []
-        self.completed_processes = []
-        self.time_points = []
-        self.ready_queue_data = []
-        self.gantt_data = []
+        self.display_results("First Come First Serve (FCFS)", processes, gantt)
+    
+    def sjf(self):
+        """Shortest Job First - Non-preemptive"""
+        processes = self.processes.copy()
+        n = len(processes)
+        current_time = 0
+        completed = []
+        gantt = []
         
-    def clear_plots(self):
-        for ax in [self.ax_ready_queue, self.ax_timeline, self.ax_gantt]:
-            ax.clear()
-        
-        self.ax_ready_queue.set_title('Ready Queue Length Over Time')
-        self.ax_ready_queue.set_xlabel('Time (ms)')
-        self.ax_ready_queue.set_ylabel('Processes in Ready Queue')
-        self.ax_ready_queue.grid(True, alpha=0.3)
-        
-        self.ax_timeline.set_title('Process Execution Timeline')
-        self.ax_timeline.set_xlabel('Time (ms)')
-        self.ax_timeline.set_ylabel('Cumulative Processes Completed')
-        self.ax_timeline.grid(True, alpha=0.3)
-        
-        self.canvas_live.draw()
-        self.canvas_gantt.draw()
-        
-    def generate_processes(self, num_processes, arrival_min, arrival_max, 
-                          burst_min, burst_max, priority_min, priority_max):
-        """Generate random processes with PCB attributes"""
-        processes = []
-        
-        for i in range(1, num_processes + 1):
-            arrival_time = random.randint(arrival_min, arrival_max)
-            burst_time = random.randint(burst_min, burst_max)
-            priority = random.randint(priority_min, priority_max)
+        while len(completed) < n:
+            # Find available processes
+            available = [p for p in processes if p.arrival_time <= current_time and p not in completed]
             
-            process = Process(arrival_time, i)
-            process.burst_time = burst_time
-            process.remaining_time = burst_time
-            process.priority = priority
+            if not available:
+                current_time += 1
+                continue
             
-            processes.append(process)
+            # Select shortest job
+            shortest = min(available, key=lambda p: p.burst_time)
+            gantt.append(f"P{shortest.pid}")
+            current_time += shortest.burst_time
+            shortest.completion_time = current_time
+            shortest.turnaround_time = shortest.completion_time - shortest.arrival_time
+            shortest.waiting_time = shortest.turnaround_time - shortest.burst_time
+            completed.append(shortest)
+        
+        self.display_results("Shortest Job First (SJF)", processes, gantt)
+    
+    def round_robin(self, quantum):
+        """Round Robin"""
+        processes = [Process(p.pid, p.arrival_time, p.burst_time, p.priority) for p in self.processes]
+        current_time = 0
+        queue = []
+        gantt = []
+        completed = []
         
         # Sort by arrival time
         processes.sort(key=lambda p: p.arrival_time)
-        return processes
+        idx = 0
         
-    def run_simulation(self, num_processes, arrival_min, arrival_max, 
-                      burst_min, burst_max, priority_min, priority_max, quantum):
-        # Generate processes
-        self.processes = self.generate_processes(num_processes, arrival_min, arrival_max, 
-                                                 burst_min, burst_max, priority_min, priority_max)
+        # Add first process(es)
+        while idx < len(processes) and processes[idx].arrival_time <= current_time:
+            queue.append(processes[idx])
+            idx += 1
         
-        # Run selected algorithm
-        algorithm = self.algorithm_var.get()
-        
-        if algorithm == "fcfs":
-            self.simulate_fcfs()
-        elif algorithm == "sjf":
-            self.simulate_sjf()
-        elif algorithm == "srtf":
-            self.simulate_srtf()
-        elif algorithm == "rr":
-            self.simulate_round_robin(quantum)
-        elif algorithm == "priority":
-            self.simulate_priority(preemptive=False)
-        elif algorithm == "priority_preemptive":
-            self.simulate_priority(preemptive=True)
+        while queue or idx < len(processes):
+            if not queue:
+                current_time = processes[idx].arrival_time
+                queue.append(processes[idx])
+                idx += 1
             
-        # Generate final results
-        self.root.after(0, self.show_results)
-        
-    def simulate_fcfs(self):
-        """First Come First Serve - Non-preemptive"""
-        ready_queue = deque()
-        current_time = 0
-        process_index = 0
-        
-        while len(self.completed_processes) < len(self.processes):
-            if not self.simulation_running:
-                break
+            current = queue.pop(0)
+            gantt.append(f"P{current.pid}")
             
-            # Add newly arrived processes to ready queue
-            while process_index < len(self.processes) and self.processes[process_index].arrival_time <= current_time:
-                p = self.processes[process_index]
-                p.state = "READY"
-                ready_queue.append(p)
-                process_index += 1
-            
-            # Record metrics
-            self.time_points.append(current_time)
-            self.ready_queue_data.append(len(ready_queue))
-            
-            # Execute process if available
-            if ready_queue:
-                process = ready_queue.popleft()
-                process.state = "RUNNING"
-                
-                if process.start_time is None:
-                    process.start_time = current_time
-                    process.response_time = current_time - process.arrival_time
-                
-                # Record Gantt chart data
-                self.gantt_data.append((current_time, process.process_id, process.burst_time))
-                
-                # Execute for full burst time (non-preemptive)
-                current_time += process.burst_time
-                
-                # Process completed
-                process.state = "TERMINATED"
-                process.completion_time = current_time
-                process.turnaround_time = current_time - process.arrival_time
-                process.waiting_time = process.turnaround_time - process.burst_time
-                
-                self.completed_processes.append(process)
-                
-                self.status_var.set(f"Time: {current_time}ms | Completed: {len(self.completed_processes)}/{len(self.processes)}")
-            else:
-                # CPU idle
-                current_time += 1
-            
-            time.sleep(0.01)  # Visualization delay
-    
-    def simulate_sjf(self):
-        """Shortest Job First - Non-preemptive"""
-        ready_queue = []
-        current_time = 0
-        process_index = 0
-        
-        while len(self.completed_processes) < len(self.processes):
-            if not self.simulation_running:
-                break
+            exec_time = min(quantum, current.remaining_time)
+            current_time += exec_time
+            current.remaining_time -= exec_time
             
             # Add newly arrived processes
-            while process_index < len(self.processes) and self.processes[process_index].arrival_time <= current_time:
-                p = self.processes[process_index]
-                p.state = "READY"
-                ready_queue.append(p)
-                process_index += 1
+            while idx < len(processes) and processes[idx].arrival_time <= current_time:
+                queue.append(processes[idx])
+                idx += 1
             
-            # Record metrics
-            self.time_points.append(current_time)
-            self.ready_queue_data.append(len(ready_queue))
-            
-            if ready_queue:
-                # Sort by burst time (shortest first)
-                ready_queue.sort(key=lambda p: p.burst_time)
-                process = ready_queue.pop(0)
-                process.state = "RUNNING"
-                
-                if process.start_time is None:
-                    process.start_time = current_time
-                    process.response_time = current_time - process.arrival_time
-                
-                self.gantt_data.append((current_time, process.process_id, process.burst_time))
-                current_time += process.burst_time
-                
-                process.state = "TERMINATED"
-                process.completion_time = current_time
-                process.turnaround_time = current_time - process.arrival_time
-                process.waiting_time = process.turnaround_time - process.burst_time
-                
-                self.completed_processes.append(process)
-                self.status_var.set(f"Time: {current_time}ms | Completed: {len(self.completed_processes)}/{len(self.processes)}")
+            if current.remaining_time > 0:
+                queue.append(current)
             else:
-                current_time += 1
-            
-            time.sleep(0.01)
+                current.completion_time = current_time
+                current.turnaround_time = current.completion_time - current.arrival_time
+                current.waiting_time = current.turnaround_time - current.burst_time
+                completed.append(current)
+        
+        self.display_results(f"Round Robin (Time Quantum = {quantum})", self.processes, gantt)
     
-    def simulate_srtf(self):
-        """Shortest Remaining Time First - Preemptive"""
-        ready_queue = []
+    def priority_scheduling(self):
+        """Priority Scheduling - Non-preemptive (Lower number = Higher priority)"""
+        processes = self.processes.copy()
+        n = len(processes)
         current_time = 0
-        process_index = 0
-        current_process = None
+        completed = []
+        gantt = []
         
-        while len(self.completed_processes) < len(self.processes) or current_process:
-            if not self.simulation_running:
-                break
+        while len(completed) < n:
+            # Find available processes
+            available = [p for p in processes if p.arrival_time <= current_time and p not in completed]
             
-            # Add newly arrived processes
-            while process_index < len(self.processes) and self.processes[process_index].arrival_time <= current_time:
-                p = self.processes[process_index]
-                p.state = "READY"
-                ready_queue.append(p)
-                process_index += 1
-            
-            # If current process exists, add it back to queue for comparison
-            if current_process:
-                ready_queue.append(current_process)
-            
-            # Record metrics
-            self.time_points.append(current_time)
-            self.ready_queue_data.append(len(ready_queue))
-            
-            if ready_queue:
-                # Sort by remaining time
-                ready_queue.sort(key=lambda p: p.remaining_time)
-                process = ready_queue.pop(0)
-                
-                if process.start_time is None:
-                    process.start_time = current_time
-                    process.response_time = current_time - process.arrival_time
-                
-                process.state = "RUNNING"
-                
-                # Execute for 1 time unit
-                self.gantt_data.append((current_time, process.process_id, 1))
-                process.remaining_time -= 1
+            if not available:
                 current_time += 1
-                
-                if process.remaining_time == 0:
-                    process.state = "TERMINATED"
-                    process.completion_time = current_time
-                    process.turnaround_time = current_time - process.arrival_time
-                    process.waiting_time = process.turnaround_time - process.burst_time
-                    self.completed_processes.append(process)
-                    current_process = None
-                    self.status_var.set(f"Time: {current_time}ms | Completed: {len(self.completed_processes)}/{len(self.processes)}")
-                else:
-                    current_process = process
-            else:
-                current_time += 1
-                current_process = None
+                continue
             
-            time.sleep(0.005)
+            # Select highest priority (lowest number)
+            highest_priority = min(available, key=lambda p: p.priority)
+            gantt.append(f"P{highest_priority.pid}")
+            current_time += highest_priority.burst_time
+            highest_priority.completion_time = current_time
+            highest_priority.turnaround_time = highest_priority.completion_time - highest_priority.arrival_time
+            highest_priority.waiting_time = highest_priority.turnaround_time - highest_priority.burst_time
+            completed.append(highest_priority)
+        
+        self.display_results("Priority Scheduling (Non-preemptive)", processes, gantt)
     
-    def simulate_round_robin(self, quantum):
-        """Round Robin - Preemptive with time quantum"""
-        ready_queue = deque()
-        current_time = 0
-        process_index = 0
-        
-        while len(self.completed_processes) < len(self.processes):
-            if not self.simulation_running:
-                break
-            
-            # Add newly arrived processes
-            while process_index < len(self.processes) and self.processes[process_index].arrival_time <= current_time:
-                p = self.processes[process_index]
-                p.state = "READY"
-                ready_queue.append(p)
-                process_index += 1
-            
-            # Record metrics
-            self.time_points.append(current_time)
-            self.ready_queue_data.append(len(ready_queue))
-            
-            if ready_queue:
-                process = ready_queue.popleft()
-                
-                if process.start_time is None:
-                    process.start_time = current_time
-                    process.response_time = current_time - process.arrival_time
-                
-                process.state = "RUNNING"
-                
-                # Execute for quantum or remaining time, whichever is smaller
-                exec_time = min(quantum, process.remaining_time)
-                self.gantt_data.append((current_time, process.process_id, exec_time))
-                
-                process.remaining_time -= exec_time
-                current_time += exec_time
-                
-                # Check for new arrivals during execution
-                while process_index < len(self.processes) and self.processes[process_index].arrival_time <= current_time:
-                    p = self.processes[process_index]
-                    p.state = "READY"
-                    ready_queue.append(p)
-                    process_index += 1
-                
-                if process.remaining_time == 0:
-                    process.state = "TERMINATED"
-                    process.completion_time = current_time
-                    process.turnaround_time = current_time - process.arrival_time
-                    process.waiting_time = process.turnaround_time - process.burst_time
-                    self.completed_processes.append(process)
-                    self.status_var.set(f"Time: {current_time}ms | Completed: {len(self.completed_processes)}/{len(self.processes)}")
-                else:
-                    # Re-add to queue
-                    process.state = "READY"
-                    ready_queue.append(process)
-            else:
-                current_time += 1
-            
-            time.sleep(0.01)
-    
-    def simulate_priority(self, preemptive=False):
-        """Priority Scheduling (lower priority number = higher priority)"""
-        ready_queue = []
-        current_time = 0
-        process_index = 0
-        current_process = None
-        
-        while len(self.completed_processes) < len(self.processes) or (preemptive and current_process):
-            if not self.simulation_running:
-                break
-            
-            # Add newly arrived processes
-            while process_index < len(self.processes) and self.processes[process_index].arrival_time <= current_time:
-                p = self.processes[process_index]
-                p.state = "READY"
-                ready_queue.append(p)
-                process_index += 1
-            
-            if preemptive and current_process:
-                ready_queue.append(current_process)
-            
-            # Record metrics
-            self.time_points.append(current_time)
-            self.ready_queue_data.append(len(ready_queue))
-            
-            if ready_queue:
-                # Sort by priority (lower number = higher priority)
-                ready_queue.sort(key=lambda p: p.priority)
-                process = ready_queue.pop(0)
-                
-                if process.start_time is None:
-                    process.start_time = current_time
-                    process.response_time = current_time - process.arrival_time
-                
-                process.state = "RUNNING"
-                
-                if preemptive:
-                    # Execute for 1 time unit
-                    exec_time = 1
-                    self.gantt_data.append((current_time, process.process_id, exec_time))
-                    process.remaining_time -= 1
-                    current_time += 1
-                    
-                    if process.remaining_time == 0:
-                        process.state = "TERMINATED"
-                        process.completion_time = current_time
-                        process.turnaround_time = current_time - process.arrival_time
-                        process.waiting_time = process.turnaround_time - process.burst_time
-                        self.completed_processes.append(process)
-                        current_process = None
-                        self.status_var.set(f"Time: {current_time}ms | Completed: {len(self.completed_processes)}/{len(self.processes)}")
-                    else:
-                        current_process = process
-                else:
-                    # Non-preemptive: execute till completion
-                    self.gantt_data.append((current_time, process.process_id, process.burst_time))
-                    current_time += process.burst_time
-                    
-                    process.state = "TERMINATED"
-                    process.completion_time = current_time
-                    process.turnaround_time = current_time - process.arrival_time
-                    process.waiting_time = process.turnaround_time - process.burst_time
-                    self.completed_processes.append(process)
-                    self.status_var.set(f"Time: {current_time}ms | Completed: {len(self.completed_processes)}/{len(self.processes)}")
-            else:
-                current_time += 1
-                if preemptive:
-                    current_process = None
-            
-            time.sleep(0.005 if preemptive else 0.01)
-    
-    def update_plots(self, frame):
-        if not self.time_points:
-            return
-        
-        # Update ready queue plot
-        self.ax_ready_queue.clear()
-        self.ax_ready_queue.plot(self.time_points, self.ready_queue_data, 'b-', linewidth=2)
-        self.ax_ready_queue.fill_between(self.time_points, self.ready_queue_data, alpha=0.3)
-        self.ax_ready_queue.set_title('Ready Queue Length Over Time')
-        self.ax_ready_queue.set_xlabel('Time (ms)')
-        self.ax_ready_queue.set_ylabel('Processes in Ready Queue')
-        self.ax_ready_queue.grid(True, alpha=0.3)
-        
-        # Update timeline plot
-        self.ax_timeline.clear()
-        if self.completed_processes:
-            completion_times = [p.completion_time for p in self.completed_processes]
-            self.ax_timeline.step(completion_times, range(1, len(completion_times) + 1), 
-                                 'g-', linewidth=2, where='post')
-        
-        self.ax_timeline.set_title('Cumulative Processes Completed')
-        self.ax_timeline.set_xlabel('Time (ms)')
-        self.ax_timeline.set_ylabel('Processes Completed')
-        self.ax_timeline.grid(True, alpha=0.3)
-        
-        self.canvas_live.draw()
-    
-    def show_results(self):
-        if not self.completed_processes:
-            self.results_text.delete(1.0, tk.END)
-            self.results_text.insert(tk.END, "No processes completed.")
-            return
-        
-        # Calculate metrics
-        throughput = len(self.completed_processes)
-        avg_waiting_time = statistics.mean([p.waiting_time for p in self.completed_processes])
-        avg_turnaround_time = statistics.mean([p.turnaround_time for p in self.completed_processes])
-        avg_response_time = statistics.mean([p.response_time for p in self.completed_processes if p.response_time is not None])
-        
-        total_time = max([p.completion_time for p in self.completed_processes])
-        total_burst = sum([p.burst_time for p in self.completed_processes])
-        cpu_utilization = (total_burst / total_time) * 100 if total_time > 0 else 0
-        
-        # Display results
-        algo_names = {
-            "fcfs": "First Come First Serve (FCFS)",
-            "sjf": "Shortest Job First (SJF)",
-            "srtf": "Shortest Remaining Time First (SRTF)",
-            "rr": "Round Robin (RR)",
-            "priority": "Priority Scheduling (Non-Preemptive)",
-            "priority_preemptive": "Priority Scheduling (Preemptive)"
-        }
-        
-        algo_name = algo_names.get(self.algorithm_var.get(), "Unknown")
-        
-        results_text = f"""
-⚙️ PROCESS SCHEDULING RESULTS
-{'='*60}
-Algorithm: {algo_name}
-Total Processes: {len(self.processes)}
-
-📊 PERFORMANCE METRICS:
-• Throughput: {throughput} processes completed
-• Average Waiting Time: {avg_waiting_time:.2f} ms
-• Average Turnaround Time: {avg_turnaround_time:.2f} ms
-• Average Response Time: {avg_response_time:.2f} ms
-
-⚡ CPU METRICS:
-• Total Execution Time: {total_time} ms
-• CPU Utilization: {cpu_utilization:.1f}%
-• Context Switches: {len(self.gantt_data)}
-
-📋 PROCESS DETAILS:
-"""
-        
-        # Add individual process details
-        for p in self.completed_processes[:10]:  # Show first 10
-            results_text += f"  P{p.process_id}: Arrival={p.arrival_time}ms, Burst={p.burst_time}ms, "
-            results_text += f"Wait={p.waiting_time}ms, TAT={p.turnaround_time}ms, Priority={p.priority}\n"
-        
-        if len(self.completed_processes) > 10:
-            results_text += f"  ... and {len(self.completed_processes) - 10} more processes\n"
-        
+    def display_results(self, algorithm_name, processes, gantt):
         self.results_text.delete(1.0, tk.END)
-        self.results_text.insert(tk.END, results_text)
         
-        # Update results plots
-        self.plot_results_charts()
+        # Header
+        result = f"\n{'='*80}\n"
+        result += f"  RESULTS FOR: {algorithm_name}\n"
+        result += f"{'='*80}\n\n"
         
-        # Update Gantt chart
-        self.plot_gantt_chart()
+        # Process table
+        result += f"{'Process':<10} {'Arrival':<10} {'Burst':<10} {'Complete':<10} {'TAT':<10} {'Waiting':<10}\n"
+        result += f"{'-'*70}\n"
         
-        self.simulation_running = False
-        self.start_btn.config(state='normal')
-        self.stop_btn.config(state='disabled')
-        self.status_var.set("Simulation completed!")
-    
-    def plot_results_charts(self):
-        """Plot performance analysis charts"""
-        # Clear all result plots
-        for ax in [self.ax_throughput, self.ax_waiting, self.ax_turnaround, self.ax_response]:
-            ax.clear()
+        for p in sorted(processes, key=lambda x: x.pid):
+            result += f"{'P'+str(p.pid):<10} {p.arrival_time:<10} {p.burst_time:<10} "
+            result += f"{p.completion_time:<10} {p.turnaround_time:<10} {p.waiting_time:<10}\n"
         
-        # Throughput chart
-        self.ax_throughput.bar(['Processes\nCompleted'], [len(self.completed_processes)], 
-                              color='skyblue', alpha=0.7, edgecolor='navy', linewidth=2)
-        self.ax_throughput.set_title('Throughput', fontweight='bold')
-        self.ax_throughput.set_ylabel('Count')
+        # Averages
+        avg_tat = sum(p.turnaround_time for p in processes) / len(processes)
+        avg_wt = sum(p.waiting_time for p in processes) / len(processes)
         
-        # Waiting time distribution
-        waiting_times = [p.waiting_time for p in self.completed_processes]
-        self.ax_waiting.hist(waiting_times, bins=min(20, len(self.completed_processes)), 
-                            color='orange', alpha=0.7, edgecolor='darkorange')
-        avg_wait = statistics.mean(waiting_times)
-        self.ax_waiting.axvline(avg_wait, color='red', linestyle='--', linewidth=2,
-                               label=f'Avg: {avg_wait:.1f}ms')
-        self.ax_waiting.set_title('Waiting Time Distribution', fontweight='bold')
-        self.ax_waiting.set_xlabel('Time (ms)')
-        self.ax_waiting.set_ylabel('Frequency')
-        self.ax_waiting.legend()
+        result += f"\n{'-'*70}\n"
+        result += f"Average Turnaround Time = {avg_tat:.2f}\n"
+        result += f"Average Waiting Time    = {avg_wt:.2f}\n"
         
-        # Turnaround time distribution
-        turnaround_times = [p.turnaround_time for p in self.completed_processes]
-        self.ax_turnaround.hist(turnaround_times, bins=min(20, len(self.completed_processes)), 
-                               color='green', alpha=0.7, edgecolor='darkgreen')
-        avg_tat = statistics.mean(turnaround_times)
-        self.ax_turnaround.axvline(avg_tat, color='red', linestyle='--', linewidth=2,
-                                  label=f'Avg: {avg_tat:.1f}ms')
-        self.ax_turnaround.set_title('Turnaround Time Distribution', fontweight='bold')
-        self.ax_turnaround.set_xlabel('Time (ms)')
-        self.ax_turnaround.set_ylabel('Frequency')
-        self.ax_turnaround.legend()
+        # Gantt Chart
+        result += f"\n{'='*80}\n"
+        result += f"  GANTT CHART (Execution Timeline)\n"
+        result += f"{'='*80}\n\n"
+        result += "  " + " → ".join(gantt) + "\n"
         
-        # Response time chart
-        response_times = [p.response_time for p in self.completed_processes if p.response_time is not None]
-        if response_times:
-            self.ax_response.hist(response_times, bins=min(20, len(response_times)), 
-                                 color='purple', alpha=0.7, edgecolor='indigo')
-            avg_resp = statistics.mean(response_times)
-            self.ax_response.axvline(avg_resp, color='red', linestyle='--', linewidth=2,
-                                    label=f'Avg: {avg_resp:.1f}ms')
-            self.ax_response.set_title('Response Time Distribution', fontweight='bold')
-            self.ax_response.set_xlabel('Time (ms)')
-            self.ax_response.set_ylabel('Frequency')
-            self.ax_response.legend()
-        
-        self.fig_results.tight_layout()
-        self.canvas_results.draw()
-    
-    def plot_gantt_chart(self):
-        """Create Gantt chart showing process execution timeline"""
-        self.ax_gantt.clear()
-        
-        if not self.gantt_data:
-            return
-        
-        # Consolidate consecutive executions of same process
-        consolidated = []
-        current_start = self.gantt_data[0][0]
-        current_pid = self.gantt_data[0][1]
-        current_duration = self.gantt_data[0][2]
-        
-        for i in range(1, len(self.gantt_data)):
-            start, pid, duration = self.gantt_data[i]
-            
-            if pid == current_pid and start == current_start + current_duration:
-                # Same process, consecutive execution
-                current_duration += duration
-            else:
-                # Different process or gap, save current and start new
-                consolidated.append((current_start, current_pid, current_duration))
-                current_start = start
-                current_pid = pid
-                current_duration = duration
-        
-        # Add last segment
-        consolidated.append((current_start, current_pid, current_duration))
-        
-        # Plot Gantt chart
-        colors = plt.cm.tab20(np.linspace(0, 1, len(self.processes)))
-        process_colors = {p.process_id: colors[i % len(colors)] for i, p in enumerate(self.processes)}
-        
-        y_pos = 0
-        for start, pid, duration in consolidated:
-            self.ax_gantt.barh(y_pos, duration, left=start, height=0.8, 
-                              color=process_colors[pid], edgecolor='black', linewidth=0.5)
-            # Add process label
-            self.ax_gantt.text(start + duration/2, y_pos, f'P{pid}', 
-                              ha='center', va='center', fontweight='bold', fontsize=8)
-        
-        self.ax_gantt.set_xlabel('Time (ms)', fontweight='bold')
-        self.ax_gantt.set_ylabel('CPU', fontweight='bold')
-        self.ax_gantt.set_title('Process Execution Gantt Chart', fontweight='bold', fontsize=12)
-        self.ax_gantt.set_yticks([y_pos])
-        self.ax_gantt.set_yticklabels(['CPU'])
-        self.ax_gantt.grid(True, axis='x', alpha=0.3)
-        
-        # Add legend
-        legend_elements = [plt.Rectangle((0,0),1,1, facecolor=process_colors[p.process_id], 
-                                        edgecolor='black', label=f'P{p.process_id}')
-                          for p in self.processes[:10]]  # Show first 10 in legend
-        if len(self.processes) > 10:
-            self.ax_gantt.legend(handles=legend_elements, loc='upper right', 
-                                bbox_to_anchor=(1.15, 1), ncol=2, fontsize=8)
-        else:
-            self.ax_gantt.legend(handles=legend_elements, loc='upper right', 
-                                bbox_to_anchor=(1.12, 1), fontsize=8)
-        
-        self.fig_gantt.tight_layout()
-        self.canvas_gantt.draw()
+        self.results_text.insert(1.0, result)
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = ProcessSchedulerGUI(root)
+    app = CPUScheduler(root)
     root.mainloop()
