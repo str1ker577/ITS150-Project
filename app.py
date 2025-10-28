@@ -1,3 +1,7 @@
+# CPU Process Simulation using Python
+# ITS150 / AM4
+# By John Christian Adao and Kyle Hendrik L. Lim
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 import random
@@ -9,6 +13,7 @@ class Process:
         self.arrival_time = arrival_time
         self.burst_time = burst_time
         self.priority = priority
+        self.remaining_time = burst_time 
         self.completion_time = 0
         self.turnaround_time = 0
         self.waiting_time = 0
@@ -17,7 +22,7 @@ class Process:
 class CPUScheduler:
     def __init__(self, root):
         self.root = root
-        self.root.title("⚙️ CPU Scheduling Simulator - MAPUA UNIVERSITY")
+        self.root.title("⚙️ CPU Scheduling Simulator")
         self.root.geometry("900x700")
         self.root.configure(bg='#f0f0f0')
         
@@ -293,7 +298,8 @@ class CPUScheduler:
                 current.waiting_time = current.turnaround_time - current.burst_time
                 completed.append(current)
         
-        self.display_results(f"Round Robin (Time Quantum = {quantum})", self.processes, gantt)
+        # FIX: Pass 'processes' instead of 'self.processes'
+        self.display_results(f"Round Robin (Time Quantum = {quantum})", processes, gantt)
     
     def priority_scheduling(self):
         """Priority Scheduling - Non-preemptive (Lower number = Higher priority)"""
@@ -358,4 +364,3 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = CPUScheduler(root)
     root.mainloop()
-    
