@@ -1,5 +1,5 @@
 # CPU Process Simulation using Python
-# ITS150 / AM4
+# ITS150 / AM4 - Group 9
 # By John Christian Adao and Kyle Hendrik L. Lim
 
 import tkinter as tk
